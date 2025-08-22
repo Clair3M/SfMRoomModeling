@@ -1,5 +1,6 @@
 import cv2 as cv
 import numpy as np
+from scipy import stats
 
 # returns keypoint pixel loactions and sift descriptors for the keypoints
 def get_keypoints(img_path):
@@ -80,6 +81,15 @@ def convert_3d_norm_to_3d(points_4d):
         points_3d.append(new_point)
     return points_3d
 
+def remove_outliers(points, max_z_score):
+    points = np.array(points)
+    normalized_points = np.linalg.norm(points, axis=1)
+    z = np.abs(stats.zscore(normalized_points))
+    outlier_indices = np.where(z > max_z_score)[0]
+    refined_points = np.delete(points, outlier_indices, axis=0)
+    refined_points = refined_points.tolist()
+    return refined_points
+
 
 def create_pointcloud(img_list, K):
     img1_points, img1_desc = get_keypoints(img_list[0])
@@ -106,6 +116,7 @@ def create_pointcloud(img_list, K):
     points_4d = cv.triangulatePoints(proj_matrix1, proj_matrix2, img1_kps_xy,\
                                      img2_kps_xy)
     point_cloud = convert_3d_norm_to_3d(points_4d)
+    #point_cloud = remove_outliers(points_3d, 2)
 
     match_trainIdx = [match[0].trainIdx for match in init_matches]
     match_trainIdx.sort(reverse=True)
@@ -117,7 +128,7 @@ def create_pointcloud(img_list, K):
     prev_proj_mat = proj_matrix2
     point_cloud_descs = np.array(img2_mat_desc, dtype=np.float32)
 
-    for img in img_list[2:4]:
+    for img in img_list[2:5]:
         new_img_points, new_img_desc = get_keypoints(img)
         matches_2d_3d = get_matching_kps_bf(point_cloud_descs, new_img_desc)
         kp_matches_3d, kp_matches_2d = get_matching_kps(matches_2d_3d,\
@@ -139,8 +150,10 @@ def create_pointcloud(img_list, K):
         
         new_4d_points = cv.triangulatePoints(prev_proj_mat, proj_mat, old_kps_xy, new_kps_xy)
         new_3d_points = convert_3d_norm_to_3d(new_4d_points)
-        point_cloud += new_3d_points
 
+        new_3d_points = remove_outliers(new_3d_points, 2)
+
+        point_cloud += new_3d_points
         match_trainIdx = [match[0].trainIdx for match in matches_2d_2d]
         match_trainIdx.sort(reverse=True)
         prev_kps = np.array(new_img_points)
@@ -150,5 +163,4 @@ def create_pointcloud(img_list, K):
             prev_descs = np.delete(prev_descs, match_id, 0)
         prev_proj_mat = proj_mat
         point_cloud_descs = np.append(point_cloud_descs, new_match_descs, axis=0)
-
     return point_cloud
